@@ -1,0 +1,26 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Editor folders and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# Cursor AI cache or temp files (example, custom)
+.cursor-cache/
+.cursor-temp/
+
+# Generated coverage reports
+coverage/
+
+# Misc
+*.log
