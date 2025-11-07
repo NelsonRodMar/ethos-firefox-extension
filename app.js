@@ -297,7 +297,7 @@ async function fetchEthosScore(username) {
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "X-Ethos-Client": "ethos-unofficial-firefox-extension@1.0.0"
+        "X-Ethos-Client": "ethos-unofficial-extension@1.0.0"
       },
       body: JSON.stringify({
         accountIdsOrUsernames: [username]

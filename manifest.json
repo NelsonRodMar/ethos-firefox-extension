@@ -1,32 +1,32 @@
 {
     "manifest_version": 2,
-    "name": "Ethos Network for Firefox (unofficial)",
+    "name": "Ethos Network (unofficial)",
     "version": "1.0",
-  
     "description": "This is an unofficial extension for the Ethos Network that displays the Ethos score of the X account.",
-  
     "icons": {
-      "48": "icons/ethos-logo-unofficial.png"
+        "48": "icons/ethos-logo-unofficial.png"
     },
-
-    "background": {
-      "scripts": ["background.js"],
-      "persistent": true
-    },
-
     "permissions": [
-      "https://api.ethos.network/*"
+        "https://api.ethos.network/*"
     ],
-
+    "browser_specific_settings": {
+        "gecko": {
+            "data_collection_permissions": {
+                "required": ["websiteContent"]
+            }
+        }
+    },
     "content_scripts": [
-      {
-        "matches": [
-          "*://x.com/*",
-          "*://*.x.com/*",
-          "*://twitter.com/*",
-          "*://*.twitter.com/*"
-        ],
-        "js": ["app.js"]
-      }
+        {
+            "matches": [
+                "*://x.com/*",
+                "*://*.x.com/*",
+                "*://twitter.com/*",
+                "*://*.twitter.com/*"
+            ],
+            "js": [
+                "app.js"
+            ]
+        }
     ]
-  }
+}
