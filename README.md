@@ -138,6 +138,10 @@ This is an unofficial extension. Contributions and improvements are welcome! Ple
 
 For issues, questions, or contributions, please open an issue in the repository.
 
+## Support Me
+
+This is an open source and free extension, but if you want to support me the best way is to buy my creator coin [$nelsonrodmar](https://swap.cow.fi/#/8453/swap/WETH/0xf6620d7a9d5cd020ce294a923aa40324576f8776) on Base `0xf6620d7a9d5cd020ce294a923aa40324576f8776`
+
 ---
 
 **Note**: This is an unofficial extension and is not affiliated with or endorsed by Ethos Network or X (Twitter).
