@@ -164,7 +164,12 @@ function extractUsernameFromURL() {
 function extractUsernameFromContainer(container) {
   // Method 1: Look for @username text in the container first (most reliable)
   // This is the most accurate method since the container contains the display name
-  const textContent = container.textContent || '';
+  let textContent = container.textContent || '';
+
+  // Because when we are on profile of someone, textContent contains "Follows You", so we need to get the username from the URL
+  if (/Follows\s+You/i.test(textContent)) {
+    textContent = container.ownerDocument.URL;
+  }
   const atMatches = Array.from(textContent.matchAll(/@([a-zA-Z0-9_]+)/g));
   if (atMatches.length > 0) {
     // Return the first @username found - this is the username for this container
