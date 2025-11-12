@@ -1,7 +1,7 @@
 {
     "manifest_version": 2,
     "name": "Ethos Network (unofficial)",
-    "version": "1.0",
+    "version": "1.1",
     "description": "This is an unofficial extension for the Ethos Network that displays the Ethos score of the X account.",
     "icons": {
         "48": "icons/ethos-logo-unofficial.png"
@@ -11,6 +11,7 @@
     ],
     "browser_specific_settings": {
         "gecko": {
+            "id": "{4f5938a0-d561-4702-b0cd-d3d14e8318eb}",
             "data_collection_permissions": {
                 "required": ["websiteContent"]
             }
