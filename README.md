@@ -31,7 +31,7 @@ The extension will remain active until you restart Firefox. Repeat these steps a
 To create a ZIP archive for distribution:
 
 ```bash
-zip -r ethos-firefox-extension.zip manifest.json app.js background.js icons/
+zip -r ethos-firefox-extension.zip manifest.json app.js icons/
 ```
 
 **Important**: Ensure `manifest.json` is at the root of the archive, otherwise Firefox will report "does not contain a valid manifest."
