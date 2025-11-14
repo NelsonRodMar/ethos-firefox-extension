@@ -2,7 +2,7 @@
     "manifest_version": 2,
     "name": "Ethos Network (unofficial)",
     "version": "1.1",
-    "description": "This is an unofficial extension for the Ethos Network that displays the Ethos score of the X account.",
+    "description": "This is an unofficial extension for the Ethos Network that displays the Ethos score of X and Farcaster.",
     "icons": {
         "48": "icons/ethos-logo-unofficial.png"
     },
@@ -23,7 +23,11 @@
                 "*://x.com/*",
                 "*://*.x.com/*",
                 "*://twitter.com/*",
-                "*://*.twitter.com/*"
+                "*://*.twitter.com/*",
+                "*://farcaster.xyz/*",
+                "*://*.farcaster.xyz/*",
+                "*://warpcast.com/*",
+                "*://*.warpcast.com/*"
             ],
             "js": [
                 "app.js"

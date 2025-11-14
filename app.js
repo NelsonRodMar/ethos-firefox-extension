@@ -2,10 +2,38 @@ const BOX_CLASS = "ethos-box";
 const STYLE_ID = "ethos-box-style";
 const API_ETHOS = "https://api.ethos.network/api/v2";
 
-const CONTAINER_SELECTORS = [
+// Platform detection
+function getPlatform() {
+  const hostname = window.location.hostname;
+  if (hostname.includes('farcaster.xyz') || hostname.includes('warpcast.com')) {
+    return 'farcaster';
+  }
+  if (hostname.includes('x.com') || hostname.includes('twitter.com')) {
+    return 'x';
+  }
+  return null;
+}
+
+// Container selectors for each platform
+const CONTAINER_SELECTORS = {
+  x: [
   'div[data-testid="UserName"]',
   'div[data-testid="User-Name"]'
-];
+  ],
+  farcaster: [
+    // For Farcaster, we look for username links and use their parent containers
+    // The username appears in links like <a href="/username">username</a>
+    // We'll find these links and use their parent divs as containers
+    'a[href^="/"][class*="font-semibold"]', // Username links with font-semibold class
+    'a[href^="/"]' // Fallback: any link that might be a username
+  ]
+};
+
+function getContainerSelectors() {
+  const platform = getPlatform();
+  if (!platform) return [];
+  return CONTAINER_SELECTORS[platform] || [];
+}
 
 let processedContainers = new WeakSet();
 let containerToUsernameMap = new WeakMap();
@@ -153,30 +181,110 @@ function updateBox(box, score) {
 
 // Extract the username from the URL
 function extractUsernameFromURL() {
+  const platform = getPlatform();
   const pathMatch = window.location.pathname.match(/^\/([^\/]+)/);
-  if (pathMatch && pathMatch[1] && pathMatch[1] !== "home" && pathMatch[1] !== "explore" && pathMatch[1] !== "notifications") {
-    return pathMatch[1];
+  
+  if (!pathMatch || !pathMatch[1]) {
+    return null;
   }
+  
+  const username = pathMatch[1];
+  
+  // Platform-specific excluded routes
+  const excludedRoutes = {
+    x: ['explore', 'messages', 'i', 'settings', 'compose', 'status', 'hashtag'],
+    farcaster: [ 'explore', 'settings', 'compose']
+  };
+  
+  const excluded = excludedRoutes[platform] || [];
+  if (excluded.includes(username)) {
   return null;
+  }
+  
+  return username;
 }
 
 // Extract the username from the container
 function extractUsernameFromContainer(container) {
+  const platform = getPlatform();
+  
+ // Platform-specific excluded routes
+ const excludedRoutes = {
+  x: ['explore', 'messages', 'i', 'settings', 'compose', 'status', 'hashtag'],
+  farcaster: [ 'explore', 'settings', 'compose']
+};
+
+  
+  const excluded = excludedRoutes[platform] || [];
+  
+  // For Farcaster, prioritize link extraction (most reliable)
+  if (platform === 'farcaster') {
+    // If on a profile page and container doesn't have links, try URL extraction first
+    const urlUsername = extractUsernameFromURL();
+    const links = container.querySelectorAll('a[href^="/"]');
+    if (urlUsername && links.length === 0) {
+      // If no links found in container, it might be a profile header with just text
+      return urlUsername;
+    }
+    
+    for (const link of links) {
+      const href = link.getAttribute("href");
+      const match = href.match(/^\/([^\/\?]+)/);
+      
+      if (match && match[1] && !excluded.includes(match[1].toLowerCase())) {
+        const username = match[1];
+        const linkText = link.textContent?.trim();
+        // If link text matches username, it's likely the username link
+        if (linkText === username || linkText === `@${username}`) {
+          return username;
+        }
+      }
+    }
+    // Fallback: return first valid link
+    for (const link of links) {
+      const href = link.getAttribute("href");
+      const match = href.match(/^\/([^\/\?]+)/);
+      if (match && match[1] && !excluded.includes(match[1].toLowerCase())) {
+        return match[1];
+      }
+    }
+    return urlUsername;
+  }
+  
+  // For X/Twitter, use original logic
   // Method 1: Look for @username text in the container first (most reliable)
   // This is the most accurate method since the container contains the display name
   let textContent = container.textContent || '';
 
-  // Because when we are on profile of someone, textContent contains "Follows You", so we need to get the username from the URL
+  // X-specific: Because when we are on profile of someone, textContent contains "Follows You", so we need to get the username from the URL
   if (/Follows\s+You/i.test(textContent)) {
     textContent = container.ownerDocument.URL;
   }
+  
   const atMatches = Array.from(textContent.matchAll(/@([a-zA-Z0-9_]+)/g));
   if (atMatches.length > 0) {
     // Return the first @username found - this is the username for this container
     return atMatches[0][1];
   }
   
-  // Method 2: Find the article and look for username link in the container's section
+  // Method 2: Look for username links in the container or nearby
+  const links = container.querySelectorAll('a[href^="/"]');
+  
+  for (const link of links) {
+    const href = link.getAttribute("href");
+    const match = href.match(/^\/([^\/\?]+)/);
+    
+    if (match && match[1] && !excluded.includes(match[1])) {
+      // Skip links that are clearly not usernames
+      if (href.match(/^\/[^\/]+\/(status|photo|video|media|hashtag)/)) {
+        continue;
+      }
+      return match[1];
+    }
+  }
+  
+  // Method 3: For X, find the article and look for username link in the container's section
+  if (platform === 'x') {
   const article = container.closest('article[data-testid="tweet"]') || container.closest('article');
   if (!article) {
     return extractUsernameFromURL();
@@ -188,7 +296,6 @@ function extractUsernameFromContainer(container) {
   // Find the section/div that contains this specific container
   // by finding the smallest parent that contains this container but not others
   let section = container.parentElement;
-  const excludedRoutes = ['home', 'explore', 'notifications', 'messages', 'i', 'settings', 'compose', 'status', 'hashtag'];
   
   while (section && section !== article) {
     // Check if this section contains only our container (or our container is the closest)
@@ -222,12 +329,12 @@ function extractUsernameFromContainer(container) {
     // If this section only contains our container (or our container is the primary one), search here
     if (!containsOtherContainer) {
       // Look for username links in this section
-      const links = section.querySelectorAll('a[href^="/"]');
-      for (const link of links) {
+        const sectionLinks = section.querySelectorAll('a[href^="/"]');
+        for (const link of sectionLinks) {
         const href = link.getAttribute("href");
         const match = href.match(/^\/([^\/\?]+)/);
         
-        if (match && match[1] && !excludedRoutes.includes(match[1])) {
+          if (match && match[1] && !excluded.includes(match[1])) {
           // Skip links that are clearly not usernames
           if (href.match(/^\/[^\/]+\/(status|photo|video|media|hashtag)/)) {
             continue;
@@ -256,9 +363,10 @@ function extractUsernameFromContainer(container) {
     }
     
     section = section.parentElement;
+    }
   }
   
-  // Method 3: Fallback to URL if on profile page
+  // Method 4: Fallback to URL if on profile page
   return extractUsernameFromURL();
 }
 
@@ -296,36 +404,130 @@ function getDOMDistance(element1, element2) {
 
 // Fetch the score from the Ethos API
 async function fetchEthosScore(username) {
+  const platform = getPlatform();
+  if (!platform) {
+    return null;
+  }
+  
   try {
-    const response = await fetch(`${API_ETHOS}/users/by/x`, {
+    let url, options;
+    
+    if (platform === 'farcaster') {
+      // Farcaster uses GET with username in the path
+      // Endpoint: /user/by/farcaster/username/{farcasterUsername}
+      url = `${API_ETHOS}/user/by/farcaster/username/${encodeURIComponent(username)}`;
+      options = {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+          "X-Ethos-Client": "ethos-unofficial-extension@1.0.0"
+        }
+      };
+    } else {
+      // X/Twitter uses POST with body
+      url = `${API_ETHOS}/users/by/x`;
+      const requestBody = {
+        accountIdsOrUsernames: [username]
+      };
+      options = {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
         "X-Ethos-Client": "ethos-unofficial-extension@1.0.0"
       },
-      body: JSON.stringify({
-        accountIdsOrUsernames: [username]
-      })
-    });
+        body: JSON.stringify(requestBody)
+      };
+    }
+    
+    const response = await fetch(url, options);
     
     if (!response.ok) {
       return null;
     }
     
     const data = await response.json();
-    if (Array.isArray(data) && data.length > 0 && data[0]) {
-      return data[0].score;
+    
+    // Handle response based on platform
+    let userData = null;
+    
+    if (platform === 'farcaster') {
+      // Farcaster returns a single object, not an array
+      if (data && typeof data === 'object' && !Array.isArray(data)) {
+        userData = data;
+      } else {
+        return null;
+      }
+    } else {
+      // X/Twitter returns an array
+      if (Array.isArray(data) && data.length > 0) {
+        userData = data[0];
+      } else {
+        return null;
+      }
     }
+    
+    if (userData) {
+      const score = userData.score;
+      
+      // Handle null, undefined, or valid score values
+      if (score !== null && score !== undefined) {
+        return score;
+      }
+    }
+    
     return null;
   } catch (error) {
-    console.error("Ethos direct API call failed:", error);
+    console.error(`Ethos Extension [${platform}]: API call failed:`, error);
     return null;
   }
 }
 
 // Find the name span in the container
 function findNameSpan(container) {
+  const platform = getPlatform();
+  
+  // For Farcaster, look for the username link or text
+  if (platform === 'farcaster') {
+    // First, try to find a username link
+    const usernameLink = container.querySelector('a[href^="/"]');
+    if (usernameLink) {
+      // Check if it's a valid username link
+      const href = usernameLink.getAttribute('href');
+      const match = href.match(/^\/([^\/\?]+)/);
+      if (match && match[1]) {
+        const username = match[1];
+        const linkText = usernameLink.textContent?.trim();
+        // If link text matches username, it's likely the username link
+        if (linkText === username || linkText === `@${username}`) {
+          return usernameLink;
+        }
+      }
+    }
+    
+    // If no link found, check if we're on a profile page and look for username text
+    const profileUsername = extractUsernameFromURL();
+    if (profileUsername) {
+      // Look for text elements containing the username
+      const allSpans = container.querySelectorAll('span, div, p');
+      for (const element of allSpans) {
+        const text = element.textContent?.trim();
+        if (text === `@${profileUsername}` || text === profileUsername) {
+          // Make sure it's not in post content
+          const breakWordsParent = element.closest('.break-words');
+          const textFaintParent = element.closest('.text-faint');
+          if (!breakWordsParent && !textFaintParent) {
+            return element;
+          }
+        }
+      }
+    }
+    
+    // Fallback: return the first link or span
+    return container.querySelector('a[href^="/"]') || container.querySelector('span') || null;
+  }
+  
+  // For X/Twitter, use original logic
   const dirSpans = container.querySelectorAll('span[dir]');
   if (dirSpans.length > 0) {
     return dirSpans[dirSpans.length - 1];
@@ -402,7 +604,103 @@ function scanForUserNames(root) {
     return;
   }
 
-  CONTAINER_SELECTORS.forEach((selector) => {
+  const platform = getPlatform();
+  if (!platform) {
+    return; // Don't run on unsupported platforms
+  }
+
+  // For Farcaster, we handle links differently
+  if (platform === 'farcaster') {
+    // Check if we're on a profile page
+    const profileUsername = extractUsernameFromURL();
+    if (profileUsername && root === document) {
+      // Look for the username text in the profile header (not just links)
+      // The username might be displayed as text, not a link
+      const allElements = document.querySelectorAll('*');
+      for (const element of allElements) {
+        const text = element.textContent?.trim();
+        // Check if this element contains the username as text (with or without @)
+        if (text === `@${profileUsername}` || text === profileUsername) {
+          // Make sure it's not in post content
+          const breakWordsParent = element.closest('.break-words');
+          const textFaintParent = element.closest('.text-faint');
+          if (!breakWordsParent && !textFaintParent) {
+            // Find a suitable parent container
+            let container = element.parentElement;
+            let depth = 0;
+            while (container && container !== document.body && depth < 10) {
+              const classes = container.className || '';
+              // Look for flex containers or profile header containers
+              if (classes.includes('flex') || classes.includes('profile') || container.closest('[class*="profile"]')) {
+                insertBox(container);
+                break;
+              }
+              container = container.parentElement;
+              depth++;
+            }
+            // If no suitable container found, use the element's parent
+            if (container === document.body && element.parentElement) {
+              insertBox(element.parentElement);
+            }
+            break; // Found and processed, exit loop
+          }
+        }
+      }
+    }
+    
+    // Find all potential username links
+    const usernameLinks = root.querySelectorAll?.('a[href^="/"]') || [];
+    
+    usernameLinks.forEach((link, index) => {
+      // Skip links inside elements with "break-words" class (post content) or "text-faint" class (post content)
+      const breakWordsParent = link.closest('.break-words');
+      const textFaintParent = link.closest('.text-faint');
+      if (breakWordsParent || textFaintParent) {
+        return;
+      }
+      
+      const href = link.getAttribute('href');
+      const match = href.match(/^\/([^\/\?]+)/);
+      
+      if (match && match[1]) {
+        const username = match[1];
+        // Check if it's a valid username (not excluded routes)
+        const excludedRoutes = ['explore', 'settings', 'compose'];
+        if (excludedRoutes.includes(username.toLowerCase())) {
+          return;
+        }
+        
+        // Check if the link text matches the username (likely a username link)
+        const linkText = link.textContent?.trim();
+        
+        if (linkText === username || linkText === `@${username}`) {
+          // Find a suitable parent container (look for a flex container with items-center)
+          let container = link.parentElement;
+          let depth = 0;
+          while (container && container !== document.body && depth < 10) {
+            // Look for a container with flex classes that likely contains the username
+            const classes = container.className || '';
+            if (classes.includes('flex') && classes.includes('items-center')) {
+              // Use this as the container
+              insertBox(container);
+              return;
+            }
+            container = container.parentElement;
+            depth++;
+          }
+          // Fallback: use the link's immediate parent
+          if (link.parentElement) {
+            insertBox(link.parentElement);
+          }
+        }
+      }
+    });
+    return;
+  }
+
+  // For X/Twitter, use the original logic
+  const selectors = getContainerSelectors();
+  selectors.forEach((selector) => {
     if (root instanceof Element && root.matches(selector)) {
       insertBox(root);
     }
@@ -421,18 +719,22 @@ function clearProcessedContainers() {
 }
 
 function init() {
+  const platform = getPlatform();
+  if (!platform) {
+    return; // Don't initialize on unsupported platforms
+  }
+
   ensureStyles();
   scanForUserNames(document);
 
-  // Watch for URL changes (X is a SPA)
+  // Watch for URL changes (both X and Farcaster are SPAs)
   // Method 1: Check URL periodically
   setInterval(() => {
     const newURL = window.location.href;
     if (newURL !== currentURL) {
       currentURL = newURL;
-      console.log("URL changed, clearing cache and rescanning");
       clearProcessedContainers();
-      // Small delay to let X update the DOM
+      // Small delay to let the platform update the DOM
       setTimeout(() => {
         scanForUserNames(document);
       }, 200);
