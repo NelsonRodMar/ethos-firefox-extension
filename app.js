@@ -81,6 +81,8 @@ function createBox() {
   box.className = `${BOX_CLASS} loading`;
   box.setAttribute("aria-hidden", "true");
   box.setAttribute("aria-label", "Loading Ethos score...");
+  // Hide the box initially - it will only be shown when a score is loaded
+  box.style.display = "none";
   return box;
 }
 
@@ -478,7 +480,6 @@ async function fetchEthosScore(username) {
     
     return null;
   } catch (error) {
-    console.error(`Ethos Extension [${platform}]: API call failed:`, error);
     return null;
   }
 }
@@ -489,6 +490,39 @@ function findNameSpan(container) {
   
   // For Farcaster, look for the username link or text
   if (platform === 'farcaster') {
+    // Check if we're on a profile page - if so, prioritize finding the display name
+    const profileUsername = extractUsernameFromURL();
+    if (profileUsername) {
+      // First, try to find the display name span (the one with text-lg font-bold classes)
+      // This is typically the main name shown in the profile header
+      const allSpans = container.querySelectorAll('span');
+      for (const span of allSpans) {
+        const classes = span.className || '';
+        // Check if this span has both text-lg and font-bold classes
+        if (typeof classes === 'string' && classes.includes('text-lg') && classes.includes('font-bold')) {
+          // Make sure it's not in post content
+          const breakWordsParent = span.closest('.break-words');
+          if (!breakWordsParent) {
+            // This is likely the display name in the profile header
+            return span;
+          }
+        }
+      }
+      
+      // If no display name found, look for any span with font-bold that's not the username
+      const boldSpans = container.querySelectorAll('span[class*="font-bold"]');
+      for (const span of boldSpans) {
+        const text = span.textContent?.trim();
+        // Skip if it's the username text
+        if (text !== `@${profileUsername}` && text !== profileUsername) {
+          const breakWordsParent = span.closest('.break-words');
+          if (!breakWordsParent) {
+            return span;
+          }
+        }
+      }
+    }
+    
     // First, try to find a username link
     const usernameLink = container.querySelector('a[href^="/"]');
     if (usernameLink) {
@@ -506,17 +540,16 @@ function findNameSpan(container) {
     }
     
     // If no link found, check if we're on a profile page and look for username text
-    const profileUsername = extractUsernameFromURL();
     if (profileUsername) {
       // Look for text elements containing the username
       const allSpans = container.querySelectorAll('span, div, p');
       for (const element of allSpans) {
         const text = element.textContent?.trim();
         if (text === `@${profileUsername}` || text === profileUsername) {
-          // Make sure it's not in post content
+          // Make sure it's not in post content (check for .break-words which indicates post content)
+          // Note: .text-faint is used in both profile headers and post content, so we only exclude .break-words
           const breakWordsParent = element.closest('.break-words');
-          const textFaintParent = element.closest('.text-faint');
-          if (!breakWordsParent && !textFaintParent) {
+          if (!breakWordsParent) {
             return element;
           }
         }
@@ -546,9 +579,38 @@ async function insertBox(container) {
     return;
   }
 
-  const nameSpan = findNameSpan(container);
-  if (!nameSpan) {
-    return;
+  const platform = getPlatform();
+  const profileUsername = extractUsernameFromURL();
+  
+  // For Farcaster profile pages, find the flex-1 div and insert after it
+  let insertAfterElement = null;
+  if (platform === 'farcaster' && profileUsername) {
+    // Find the flex-1 div that contains the display name
+    const flex1Divs = container.querySelectorAll('div[class*="flex-1"]');
+    for (const flex1Div of flex1Divs) {
+      // Check if this flex-1 div contains the display name (text-lg font-bold span)
+      const displayNameSpan = flex1Div.querySelector('span');
+      if (displayNameSpan) {
+        const classes = displayNameSpan.className || '';
+        if (typeof classes === 'string' && classes.includes('text-lg') && classes.includes('font-bold')) {
+          // Make sure it's not in post content
+          const breakWordsParent = flex1Div.closest('.break-words');
+          if (!breakWordsParent) {
+            insertAfterElement = flex1Div;
+            break;
+          }
+        }
+      }
+    }
+  }
+  
+  // If we didn't find a flex-1 div, use the standard nameSpan approach
+  if (!insertAfterElement) {
+    const nameSpan = findNameSpan(container);
+    if (!nameSpan) {
+      return;
+    }
+    insertAfterElement = nameSpan;
   }
 
   const username = extractUsernameFromContainer(container);
@@ -569,7 +631,7 @@ async function insertBox(container) {
   // If username changed or box doesn't exist, create/update
   if (!box) {
     box = createBox();
-    nameSpan.insertAdjacentElement("afterend", box);
+    insertAfterElement.insertAdjacentElement("afterend", box);
 
     const containerStyle = window.getComputedStyle(container);
     if (containerStyle.display === "inline") {
@@ -581,6 +643,8 @@ async function insertBox(container) {
     // Reset box to loading state if username changed
     box.className = `${BOX_CLASS} loading`;
     box.textContent = "";
+    // Hide the box until the new score is loaded
+    box.style.display = "none";
   }
 
   // Update the username mapping
@@ -621,25 +685,34 @@ function scanForUserNames(root) {
         const text = element.textContent?.trim();
         // Check if this element contains the username as text (with or without @)
         if (text === `@${profileUsername}` || text === profileUsername) {
-          // Make sure it's not in post content
+          // Make sure it's not in post content (check for .break-words which indicates post content)
           const breakWordsParent = element.closest('.break-words');
-          const textFaintParent = element.closest('.text-faint');
-          if (!breakWordsParent && !textFaintParent) {
-            // Find a suitable parent container
+          if (!breakWordsParent) {
+            // For profile header, the username might be in .text-faint, which is fine
+            // Find the flex container with items-center that contains this username
+            // This is typically the profile header container
+            // Start by checking the element's parent (which is often the flex container)
             let container = element.parentElement;
+            let foundContainer = false;
             let depth = 0;
-            while (container && container !== document.body && depth < 10) {
+            
+            while (container && container !== document.body && depth < 15) {
               const classes = container.className || '';
-              // Look for flex containers or profile header containers
-              if (classes.includes('flex') || classes.includes('profile') || container.closest('[class*="profile"]')) {
-                insertBox(container);
-                break;
+              // Look for flex containers with items-center (profile header structure)
+              if (typeof classes === 'string' && classes.includes('flex') && classes.includes('items-center')) {
+                // Make sure this container is not inside post content
+                if (!container.closest('.break-words')) {
+                  insertBox(container);
+                  foundContainer = true;
+                  break;
+                }
               }
               container = container.parentElement;
               depth++;
             }
-            // If no suitable container found, use the element's parent
-            if (container === document.body && element.parentElement) {
+            
+            // If no suitable container found, use the element's direct parent
+            if (!foundContainer && element.parentElement) {
               insertBox(element.parentElement);
             }
             break; // Found and processed, exit loop
@@ -734,12 +807,9 @@ function init() {
     if (newURL !== currentURL) {
       currentURL = newURL;
       clearProcessedContainers();
-      // Small delay to let the platform update the DOM
-      setTimeout(() => {
-        scanForUserNames(document);
-      }, 200);
+      scanForUserNames(document);
     }
-  }, 500);
+  }, 1000);
 
   // Method 2: Listen to popstate for browser navigation
   window.addEventListener('popstate', () => {
@@ -747,7 +817,7 @@ function init() {
     clearProcessedContainers();
     setTimeout(() => {
       scanForUserNames(document);
-    }, 200);
+    }, 1000);
   });
 
   // Method 3: Override pushState/replaceState to catch programmatic navigation
@@ -760,7 +830,7 @@ function init() {
     clearProcessedContainers();
     setTimeout(() => {
       scanForUserNames(document);
-    }, 200);
+    }, 1000);
   };
   
   history.replaceState = function(...args) {
@@ -769,11 +839,46 @@ function init() {
     clearProcessedContainers();
     setTimeout(() => {
       scanForUserNames(document);
-    }, 200);
+    }, 1000);
   };
 
   // Watch for DOM changes
   const observer = new MutationObserver((mutations) => {
+    // Check if we're on a profile page - if so, scan the full document
+    // because profile header might be added/updated
+    const profileUsername = extractUsernameFromURL();
+    if (profileUsername && platform === 'farcaster') {
+      // For profile pages, scan the full document when significant changes occur
+      let shouldScanDocument = false;
+      for (const mutation of mutations) {
+        if (mutation.addedNodes.length > 0) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Check if this looks like it could be part of the profile header
+              const element = node;
+              if (element.querySelector && (
+                element.querySelector('.text-faint') ||
+                element.className?.includes('flex') ||
+                element.textContent?.includes('@')
+              )) {
+                shouldScanDocument = true;
+                break;
+              }
+            }
+          }
+        }
+        if (shouldScanDocument) break;
+      }
+      
+      if (shouldScanDocument) {
+        // Use a small delay to let the DOM settle
+        setTimeout(() => {
+          scanForUserNames(document);
+        }, 100);
+      }
+    }
+    
+    // Also scan individual added nodes (for non-profile pages or links in posts)
     for (const mutation of mutations) {
       mutation.addedNodes.forEach((node) => {
         scanForUserNames(node);
