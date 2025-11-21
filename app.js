@@ -35,9 +35,16 @@ function getContainerSelectors() {
   return CONTAINER_SELECTORS[platform] || [];
 }
 
+const PROFILE_INFO_CLASS = "ethos-profile-info-container";
+const PROFILE_INFO_PROFILE_URL = "https://app.ethos.network/profile/x/";
+const WEI_IN_ETH = BigInt("1000000000000000000");
+
 let processedContainers = new WeakSet();
 let containerToUsernameMap = new WeakMap();
 let currentURL = window.location.href;
+let profileInfoContainerElement = null;
+let profileInfoUsername = null;
+let profileInfoLoadingUsername = null;
 
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) {
@@ -69,6 +76,123 @@ function ensureStyles() {
       height: 1.2rem;
       padding: 0;
       background: #ccc;
+    }
+    .${PROFILE_INFO_CLASS} {
+      margin: 0;
+      border-radius: 16px;
+      padding: 0 1rem;
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(8px);
+      color: #000000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      font-size: 0.9rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-profile-info-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-profile-info-content-stats {
+      flex: 1;
+      min-width: 0;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-profile-row-container {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .${PROFILE_INFO_CLASS} .profile-stat-rows {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      text-decoration: none;
+      color: inherit;
+    }
+    .${PROFILE_INFO_CLASS} .profile-row-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .${PROFILE_INFO_CLASS} .profile-row-item-icon {
+      flex-shrink: 0;
+      color: inherit;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-review-text-bold {
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-review-text-regular {
+      font-size: 0.8rem;
+      color: rgba(0, 0, 0, 0.7);
+    }
+    .${PROFILE_INFO_CLASS} .profile-status-item {
+      color: inherit;
+    }
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-uninitialized,
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-unknown {
+      color: #cc9a1a;
+    }
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-active,
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-verified,
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-trusted {
+      color: #127f31;
+    }
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-suspended,
+    .${PROFILE_INFO_CLASS} .profile-status-icon.profile-banned {
+      color: #b72b38;
+    }
+    .${PROFILE_INFO_CLASS} .ethos-profile-info-content-logo {
+      color: #000000;
+    }
+    .${PROFILE_INFO_CLASS} .text-link {
+      color: #000000;
+    }
+    .${PROFILE_INFO_CLASS} .write-review-link {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      border: none;
+      background: #eff3f4;
+      color: #000000;
+      cursor: pointer;
+      font-weight: 600;
+      padding: 0.65rem 1rem;
+      justify-content: center;
+      text-align: center;
+      border-radius: 12px;
+    }
+    .${PROFILE_INFO_CLASS} .write-review-link:hover {
+      background: #e1e5e8;
+    }
+    .${PROFILE_INFO_CLASS} .write-review-icon {
+      color: inherit;
+    }
+    @media (prefers-color-scheme: dark) {
+      .${PROFILE_INFO_CLASS} {
+        background: rgba(15, 20, 25, 0.9);
+        color: #f7f9f9;
+      }
+      .${PROFILE_INFO_CLASS} .ethos-review-text-regular {
+        color: rgba(247, 249, 249, 0.7);
+      }
+      .${PROFILE_INFO_CLASS} .text-link,
+      .${PROFILE_INFO_CLASS} .ethos-profile-info-content-logo,
+      .${PROFILE_INFO_CLASS} .write-review-link {
+        color: #f7f9f9;
+      }
+      .${PROFILE_INFO_CLASS} .write-review-link {
+        background: rgba(247, 249, 249, 0.15);
+      }
+      .${PROFILE_INFO_CLASS} .write-review-link:hover {
+        background: rgba(247, 249, 249, 0.25);
+      }
     }
   `;
 
@@ -179,6 +303,252 @@ function updateBox(box, score) {
     box.style.display = "none";
     box.remove();
   }
+}
+
+function formatReviewStats(userData) {
+  const reviewStats = userData?.stats?.review?.received || {};
+  const positive = reviewStats.positive || 0;
+  const neutral = reviewStats.neutral || 0;
+  const negative = reviewStats.negative || 0;
+  const total = positive + neutral + negative;
+  if (!total) {
+    return { primary: "--", secondary: "(0)" };
+  }
+  const percentage = Math.round((positive / total) * 100);
+  return { primary: `${percentage}%`, secondary: `(${total})` };
+}
+
+function formatUsdAmount(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return null;
+  }
+  return `$${numericValue.toFixed(2)}`;
+}
+
+function formatEthFromWei(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    const weiValue = typeof value === "bigint" ? value : BigInt(value);
+    const whole = weiValue / WEI_IN_ETH;
+    const fraction = weiValue % WEI_IN_ETH;
+    let fractionText = fraction.toString().padStart(18, "0").slice(0, 4);
+    fractionText = fractionText.replace(/0+$/, "");
+    return `Ξ${whole.toString()}${fractionText ? `.${fractionText}` : ""}`;
+  } catch (error) {
+    return null;
+  }
+}
+
+function formatVouchStats(userData) {
+  const vouchStats = userData?.stats?.vouch?.received || {};
+  const count = typeof vouchStats.count === "number" ? vouchStats.count : Number(vouchStats.count) || 0;
+  const usdAmountText = formatUsdAmount(vouchStats.amountUsdTotal);
+  const ethAmountText = usdAmountText ? null : formatEthFromWei(vouchStats.amountWeiTotal);
+  return {
+    primary: usdAmountText || ethAmountText || "$0.00",
+    secondary: `(${count})`
+  };
+}
+
+function getProfileStatusMeta(status) {
+  const normalized = (status || "").toString().toUpperCase();
+  const statusMap = {
+    UNINITIALIZED: { label: "Uninitialized", detail: "profile", className: "profile-uninitialized" },
+    ACTIVE: { label: "Active", detail: "profile", className: "profile-active" },
+    VERIFIED: { label: "Verified", detail: "profile", className: "profile-verified" },
+    TRUSTED: { label: "Trusted", detail: "profile", className: "profile-trusted" },
+    SUSPENDED: { label: "Suspended", detail: "profile", className: "profile-suspended" },
+    BANNED: { label: "Banned", detail: "profile", className: "profile-banned" }
+  };
+  return statusMap[normalized] || { label: "Unknown", detail: "profile", className: "profile-unknown" };
+}
+
+function createSvgIcon(config) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", config.viewBox);
+  svg.setAttribute("width", config.width || "1em");
+  svg.setAttribute("height", config.height || "1em");
+  svg.setAttribute("fill", config.fill || "currentColor");
+  if (config.className) {
+    svg.setAttribute("class", config.className);
+  }
+  (config.paths || []).forEach((pathConfig) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    Object.entries(pathConfig).forEach(([key, value]) => {
+      const attributeName = key === "d" ? "d" : key.replace(/([A-Z])/g, "-$1").toLowerCase();
+      path.setAttribute(attributeName, value);
+    });
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+function createReviewBadgeIcon() {
+  return createSvgIcon({
+    viewBox: "0 0 63 63",
+    className: "profile-row-item-icon",
+    paths: [
+      { d: "M2 9.936h15.12v15.12H2zM32.24 9.936h15.12v15.12H32.24V9.935Z" },
+      { d: "M24.68 25.059A22.68 22.68 0 0 1 2 47.739M54.92 25.059a22.68 22.68 0 0 1-22.68 22.68", stroke: "currentColor", fill: "none", strokeWidth: "15.12" }
+    ]
+  });
+}
+
+function createVouchBadgeIcon() {
+  return createSvgIcon({
+    viewBox: "0 0 60 60",
+    className: "profile-row-item-icon",
+    paths: [
+      { d: "M0 6.773v36.775L29.913 60h.174L60 43.548V6.773a59.67 59.67 0 0 1-12 5.28V0H36v14.504a60.726 60.726 0 0 1-12 0V0H12v12.053a59.67 5.67 0 0 1-12-5.28Zm12 5.28a59.713 59.713 0 0 0 12 2.45V32h12V14.504a59.713 59.713 0 0 0 12-2.451v24.4l-18 9.9-18-9.9v-24.4Z", fillRule: "evenodd", clipRule: "evenodd" }
+    ]
+  });
+}
+
+function createStatusBadgeIcon(statusClass) {
+  const svg = createSvgIcon({
+    viewBox: "0 0 22 19",
+    width: "15",
+    height: "15",
+    className: `profile-row-item-icon profile-status-icon ${statusClass || ""}`,
+    paths: [
+      { d: "M3.5 17h15L11 4 3.5 17Zm8.5-1h-2v-2h2v2Zm0-4h-2V8h2v4Z", opacity: ".3" },
+      { d: "M0 19h22L11 0 0 19Zm3.5-2L11 4l7.5 13h-15Zm6.5-3h2v2h-2v-2Zm0-6h2v4h-2V8Z" }
+    ]
+  });
+  return svg;
+}
+
+function createEthosLogoIcon() {
+  return createSvgIcon({
+    viewBox: "0 0 12 12",
+    width: "20",
+    height: "20",
+    className: "ethos-profile-info-content-logo",
+    paths: [
+      { d: "M4.93206 1.50016L4.93219 1.50016C5.35845 2.04334 5.70918 2.64863 5.96852 3.30021H2.00012L2.00012 3.29981H2L2.00009 8.7001H4.89566V8.70032H5.96164C5.70028 9.35208 5.3474 9.95727 4.9189 10.5H11V8.70032H5.96164C6.18946 8.13218 6.34775 7.52866 6.42598 6.90029H11V5.10024H6.4281C6.35142 4.47202 6.19472 3.86851 5.96852 3.30021H11V1.50016H4.93219L4.93206 1.5V1.50016ZM6.4281 5.10024C6.46376 5.39238 6.48212 5.68987 6.48212 5.99164C6.48212 6.29936 6.46303 6.60261 6.42598 6.90029H2.00012V5.10024H6.4281Z", fillRule: "evenodd", clipRule: "evenodd" }
+    ]
+  });
+}
+
+function createWriteReviewIcon() {
+  return createSvgIcon({
+    viewBox: "0 0 63 63",
+    className: "write-review-icon",
+    paths: [
+      { d: "M2 9.936h15.12v15.12H2zM32.24 9.936h15.12v15.12H32.24V9.935Z" },
+      { d: "M24.68 25.059A22.68 22.68 0 0 1 2 47.739M54.92 25.059a22.68 22.68 0 0 1-22.68 22.68", stroke: "currentColor", fill: "none", strokeWidth: "15.12" }
+    ]
+  });
+}
+
+function createProfileRowItem(iconElement, primaryText, secondaryText, extraClasses = []) {
+  const item = document.createElement("div");
+  item.className = ["profile-row-item", ...extraClasses].filter(Boolean).join(" ");
+  if (iconElement) {
+    iconElement.classList.add("profile-row-item-icon");
+    item.appendChild(iconElement);
+  }
+  const primary = document.createElement("div");
+  primary.className = "ethos-review-text-bold";
+  primary.textContent = primaryText || "--";
+  item.appendChild(primary);
+  if (secondaryText !== null && secondaryText !== undefined) {
+    const secondary = document.createElement("div");
+    secondary.className = "ethos-review-text-regular";
+    secondary.textContent = secondaryText;
+    item.appendChild(secondary);
+  }
+  return item;
+}
+
+function buildEthosProfileUrl(username) {
+  if (!username) {
+    return "https://app.ethos.network";
+  }
+  return `${PROFILE_INFO_PROFILE_URL}${encodeURIComponent(username)}`;
+}
+
+function buildProfileInfoContainer(userData) {
+  const container = document.createElement("div");
+  container.className = PROFILE_INFO_CLASS;
+  if (userData?.username) {
+    container.dataset.handleId = userData.username;
+  }
+
+  const profileUrl = buildEthosProfileUrl(userData?.username);
+
+  const content = document.createElement("div");
+  content.className = "ethos-profile-info-content";
+
+  const statsWrapper = document.createElement("div");
+  statsWrapper.className = "ethos-profile-info-content-stats";
+
+  const rowContainer = document.createElement("div");
+  rowContainer.className = "ethos-profile-row-container";
+
+  const statsLink = document.createElement("a");
+  statsLink.className = "profile-stat-rows text-link";
+  statsLink.href = profileUrl;
+  statsLink.target = "_blank";
+  statsLink.rel = "noopener noreferrer";
+
+  const reviewData = formatReviewStats(userData);
+  statsLink.appendChild(createProfileRowItem(createReviewBadgeIcon(), reviewData.primary, reviewData.secondary));
+
+  const vouchData = formatVouchStats(userData);
+  statsLink.appendChild(createProfileRowItem(createVouchBadgeIcon(), vouchData.primary, vouchData.secondary));
+
+  const statusMeta = getProfileStatusMeta(userData?.status);
+  statsLink.appendChild(
+    createProfileRowItem(
+      createStatusBadgeIcon(statusMeta.className),
+      statusMeta.label,
+      statusMeta.detail,
+      ["profile-status-item", statusMeta.className || ""]
+    )
+  );
+
+  rowContainer.appendChild(statsLink);
+  statsWrapper.appendChild(rowContainer);
+  content.appendChild(statsWrapper);
+
+  const logoLink = document.createElement("a");
+  logoLink.href = profileUrl;
+  logoLink.target = "_blank";
+  logoLink.rel = "noopener noreferrer";
+  logoLink.className = "text-link";
+  logoLink.appendChild(createEthosLogoIcon());
+  content.appendChild(logoLink);
+
+  container.appendChild(content);
+
+  const reviewButton = document.createElement("button");
+  reviewButton.type = "button";
+  reviewButton.className = "write-review-link interactive ethos-btn-text";
+  reviewButton.dataset.ethosReviewTrigger = "true";
+  if (userData?.username) {
+    reviewButton.dataset.username = userData.username;
+  }
+  const buttonIconWrapper = document.createElement("span");
+  buttonIconWrapper.appendChild(createWriteReviewIcon());
+  const buttonText = document.createElement("span");
+  buttonText.textContent = "Write a review";
+  reviewButton.appendChild(buttonIconWrapper);
+  reviewButton.appendChild(buttonText);
+  reviewButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    window.open(`${profileUrl}?modal=review`, "_blank", "noopener,noreferrer");
+  });
+
+  container.appendChild(reviewButton);
+
+  return container;
 }
 
 // Extract the username from the URL
@@ -404,19 +774,18 @@ function getDOMDistance(element1, element2) {
   return path1.length + path2.length - 2 * (commonIndex + 1);
 }
 
-// Fetch the score from the Ethos API
-async function fetchEthosScore(username) {
+// Fetch Ethos profile data (score, stats, etc.)
+async function fetchEthosUserData(username) {
   const platform = getPlatform();
-  if (!platform) {
+  if (!platform || !username) {
     return null;
   }
-  
+
   try {
-    let url, options;
-    
-    if (platform === 'farcaster') {
-      // Farcaster uses GET with username in the path
-      // Endpoint: /user/by/farcaster/username/{farcasterUsername}
+    let url;
+    let options;
+
+    if (platform === "farcaster") {
       url = `${API_ETHOS}/user/by/farcaster/username/${encodeURIComponent(username)}`;
       options = {
         method: "GET",
@@ -426,61 +795,172 @@ async function fetchEthosScore(username) {
         }
       };
     } else {
-      // X/Twitter uses POST with body
       url = `${API_ETHOS}/users/by/x`;
       const requestBody = {
         accountIdsOrUsernames: [username]
       };
       options = {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "X-Ethos-Client": "ethos-unofficial-extension@1.0.0"
-      },
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "X-Ethos-Client": "ethos-unofficial-extension@1.0.0"
+        },
         body: JSON.stringify(requestBody)
       };
     }
-    
+
     const response = await fetch(url, options);
-    
     if (!response.ok) {
       return null;
     }
-    
+
     const data = await response.json();
-    
-    // Handle response based on platform
-    let userData = null;
-    
-    if (platform === 'farcaster') {
-      // Farcaster returns a single object, not an array
-      if (data && typeof data === 'object' && !Array.isArray(data)) {
-        userData = data;
-      } else {
-        return null;
+    if (platform === "farcaster") {
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        return data;
       }
-    } else {
-      // X/Twitter returns an array
-      if (Array.isArray(data) && data.length > 0) {
-        userData = data[0];
-      } else {
-        return null;
-      }
+      return null;
     }
-    
-    if (userData) {
-      const score = userData.score;
-      
-      // Handle null, undefined, or valid score values
-      if (score !== null && score !== undefined) {
-        return score;
-      }
+
+    if (Array.isArray(data) && data.length > 0) {
+      return data[0];
     }
-    
     return null;
   } catch (error) {
     return null;
+  }
+}
+
+async function fetchEthosScore(username) {
+  const userData = await fetchEthosUserData(username);
+  if (userData && (userData.score || userData.score === 0)) {
+    return userData.score;
+  }
+  return null;
+}
+
+function isOnXProfilePage() {
+  if (getPlatform() !== "x") {
+    return false;
+  }
+  const pathSegments = window.location.pathname.split("?")[0].split("/").filter(Boolean);
+  if (!pathSegments.length) {
+    return false;
+  }
+  const usernameSegment = pathSegments[0].toLowerCase();
+  const excluded = ["explore", "messages", "i", "settings", "compose", "status", "hashtag", "notifications", "tos", "privacy", "home", "communitynotes"];
+  if (excluded.includes(usernameSegment)) {
+    return false;
+  }
+  if (pathSegments.length === 1) {
+    return true;
+  }
+  const allowedSecondSegments = new Set(["with_replies", "media", "likes", "verified_followers", "followers", "following", "lists", "communities"]);
+  return allowedSecondSegments.has(pathSegments[1].toLowerCase());
+}
+
+function findXProfileInsertionPoint() {
+  const primaryColumn = document.querySelector('div[data-testid="primaryColumn"]');
+  if (primaryColumn) {
+    const tabList = primaryColumn.querySelector('[role="tablist"]');
+    if (tabList && tabList.parentElement) {
+      return { target: tabList, position: "beforebegin" };
+    }
+  }
+
+  const selectors = [
+    'div[data-testid="UserProfileHeader_Items"]',
+    'div[data-testid="UserDescription"]',
+    'div[data-testid="UserName"]'
+  ];
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element) {
+      return { target: element, position: "afterend" };
+    }
+  }
+  if (primaryColumn) {
+    const section = primaryColumn.querySelector("section");
+    if (section) {
+      return { target: section, position: "afterend" };
+    }
+  }
+  return null;
+}
+
+function removeProfileInfoContainer() {
+  if (profileInfoContainerElement && profileInfoContainerElement.parentElement) {
+    profileInfoContainerElement.remove();
+  }
+  profileInfoContainerElement = null;
+  profileInfoUsername = null;
+}
+
+async function maybeRenderXProfileInfo() {
+  if (getPlatform() !== "x") {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  if (!isOnXProfilePage()) {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  const username = extractUsernameFromURL();
+  if (!username) {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  const normalizedUsername = username.toLowerCase();
+  const insertionPoint = findXProfileInsertionPoint();
+  if (!insertionPoint) {
+    return;
+  }
+
+  if (
+    profileInfoUsername &&
+    profileInfoUsername.toLowerCase() === normalizedUsername &&
+    profileInfoContainerElement &&
+    profileInfoContainerElement.isConnected
+  ) {
+    return;
+  }
+
+  if (profileInfoLoadingUsername === normalizedUsername) {
+    return;
+  }
+
+  profileInfoLoadingUsername = normalizedUsername;
+  try {
+    const userData = await fetchEthosUserData(username);
+    if (!userData) {
+      removeProfileInfoContainer();
+      return;
+    }
+
+    const latestUsername = extractUsernameFromURL();
+    if (!latestUsername || latestUsername.toLowerCase() !== normalizedUsername || !isOnXProfilePage()) {
+      return;
+    }
+
+    const latestInsertionPoint = findXProfileInsertionPoint();
+    if (!latestInsertionPoint) {
+      return;
+    }
+    const { target: latestTarget, position: latestPosition } = latestInsertionPoint;
+
+    const newContainer = buildProfileInfoContainer(userData);
+    removeProfileInfoContainer();
+    latestTarget.insertAdjacentElement(latestPosition, newContainer);
+    profileInfoContainerElement = newContainer;
+    profileInfoUsername = username;
+  } catch (error) {
+    // Swallow errors silently to avoid console noise
+  } finally {
+    profileInfoLoadingUsername = null;
   }
 }
 
@@ -673,6 +1153,10 @@ function scanForUserNames(root) {
     return; // Don't run on unsupported platforms
   }
 
+  if (platform === 'x') {
+    maybeRenderXProfileInfo();
+  }
+
   // For Farcaster, we handle links differently
   if (platform === 'farcaster') {
     // Check if we're on a profile page
@@ -789,6 +1273,7 @@ function clearProcessedContainers() {
   // Clear processed containers when URL changes
   processedContainers = new WeakSet();
   containerToUsernameMap = new WeakMap();
+  removeProfileInfoContainer();
 }
 
 function init() {
