@@ -1364,6 +1364,10 @@ async function insertBox(container) {
 
   const platform = getPlatform();
   if (platform === 'farcaster') {
+    // Never display ethos-box on /~/inbox page
+    if (window.location.pathname === '/~/inbox' || window.location.pathname.startsWith('/~/inbox/')) {
+      return;
+    }
     const stickyAncestor = container.closest('.sticky');
     if (stickyAncestor) {
       const existingBoxes = container.querySelectorAll(`.${BOX_CLASS}`);
@@ -1463,6 +1467,11 @@ function scanForUserNames(root) {
   const platform = getPlatform();
   if (!platform) {
     return; // Don't run on unsupported platforms
+  }
+
+  // Never scan on Farcaster /~/inbox page
+  if (platform === 'farcaster' && (window.location.pathname === '/~/inbox' || window.location.pathname.startsWith('/~/inbox/'))) {
+    return;
   }
 
   if (platform === 'x') {
