@@ -36,7 +36,11 @@ function getContainerSelectors() {
 }
 
 const PROFILE_INFO_CLASS = "ethos-profile-info-container";
-const PROFILE_INFO_PROFILE_URL = "https://app.ethos.network/profile/x/";
+const PROFILE_INFO_PROFILE_URLS = {
+  x: "https://app.ethos.network/profile/x/",
+  farcaster: "https://app.ethos.network/profile/farcaster/"
+};
+const DEFAULT_PROFILE_URL = "https://app.ethos.network";
 const WEI_IN_ETH = BigInt("1000000000000000000");
 
 let processedContainers = new WeakSet();
@@ -44,7 +48,9 @@ let containerToUsernameMap = new WeakMap();
 let currentURL = window.location.href;
 let profileInfoContainerElement = null;
 let profileInfoUsername = null;
-let profileInfoLoadingUsername = null;
+let profileInfoPlatform = null;
+let profileInfoKey = null;
+let profileInfoLoadingKey = null;
 
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) {
@@ -467,21 +473,97 @@ function createProfileRowItem(iconElement, primaryText, secondaryText, extraClas
   return item;
 }
 
-function buildEthosProfileUrl(username) {
-  if (!username) {
-    return "https://app.ethos.network";
+function getUserKeysArray(userData) {
+  const rawKeys = userData?.userkeys ?? userData?.userKeys;
+  if (!rawKeys) {
+    return [];
   }
-  return `${PROFILE_INFO_PROFILE_URL}${encodeURIComponent(username)}`;
+  if (Array.isArray(rawKeys)) {
+    return rawKeys;
+  }
+  if (typeof rawKeys === "string") {
+    return [rawKeys];
+  }
+  if (typeof rawKeys === "object") {
+    const values = Object.values(rawKeys);
+    return values.flatMap((value) => {
+      if (!value) {
+        return [];
+      }
+      if (Array.isArray(value)) {
+        return value;
+      }
+      return [value];
+    });
+  }
+  return [];
 }
 
-function buildProfileInfoContainer(userData) {
+function extractServiceUsernameFromUserData(userData, serviceDomain) {
+  const prefix = `service:${serviceDomain}:username:`;
+  for (const key of getUserKeysArray(userData)) {
+    if (typeof key === "string" && key.startsWith(prefix)) {
+      const candidate = key.slice(prefix.length).trim();
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function extractProfileLinkComponents(profileLink) {
+  if (typeof profileLink !== "string") {
+    return null;
+  }
+  const match = profileLink.match(/\/profile\/([^\/]+)\/([^\/?#]+)/i);
+  if (match && match[1] && match[2]) {
+    return { platform: match[1].toLowerCase(), username: match[2] };
+  }
+  return null;
+}
+
+function getPreferredEthosProfileTarget(userData, platform) {
+  if (!userData) {
+    return { platform, username: null };
+  }
+
+  const linkComponents = extractProfileLinkComponents(userData?.links?.profile);
+
+  if (platform === "farcaster") {
+    const xUsernameFromKeys = extractServiceUsernameFromUserData(userData, "x.com");
+    if (xUsernameFromKeys) {
+      return { platform: "x", username: xUsernameFromKeys };
+    }
+    if (linkComponents && linkComponents.platform === "x") {
+      return linkComponents;
+    }
+  }
+
+  if (linkComponents) {
+    return linkComponents;
+  }
+
+  return { platform, username: userData?.username || null };
+}
+
+function buildEthosProfileUrl(userData, platform) {
+  const target = getPreferredEthosProfileTarget(userData, platform);
+  if (!target.username) {
+    return DEFAULT_PROFILE_URL;
+  }
+  const base = PROFILE_INFO_PROFILE_URLS[target.platform] || PROFILE_INFO_PROFILE_URLS.x;
+  return `${base}${encodeURIComponent(target.username)}`;
+}
+
+function buildProfileInfoContainer(userData, platform) {
   const container = document.createElement("div");
   container.className = PROFILE_INFO_CLASS;
   if (userData?.username) {
     container.dataset.handleId = userData.username;
   }
 
-  const profileUrl = buildEthosProfileUrl(userData?.username);
+  const profileUrl = buildEthosProfileUrl(userData, platform);
 
   const content = document.createElement("div");
   content.className = "ethos-profile-info-content";
@@ -860,6 +942,38 @@ function isOnXProfilePage() {
   return allowedSecondSegments.has(pathSegments[1].toLowerCase());
 }
 
+function isOnFarcasterProfilePage() {
+  if (getPlatform() !== "farcaster") {
+    return false;
+  }
+  const pathSegments = window.location.pathname.split("?")[0].split("/").filter(Boolean);
+  if (!pathSegments.length) {
+    return false;
+  }
+  const usernameSegment = pathSegments[0].toLowerCase();
+  const excluded = ["settings", "messages", "notifications", "compose", "login", "signup", "cast", "channel"];
+  if (excluded.includes(usernameSegment)) {
+    return false;
+  }
+  if (pathSegments.length === 1) {
+    return true;
+  }
+  const allowedSecondSegments = new Set([
+    "casts",
+    "posts",
+    "replies",
+    "likes",
+    "media",
+    "collects",
+    "followers",
+    "following",
+    "collections",
+    "highlights",
+    "mentions"
+  ]);
+  return allowedSecondSegments.has(pathSegments[1].toLowerCase());
+}
+
 function findXProfileInsertionPoint() {
   const primaryColumn = document.querySelector('div[data-testid="primaryColumn"]');
   if (primaryColumn) {
@@ -889,12 +1003,64 @@ function findXProfileInsertionPoint() {
   return null;
 }
 
+function findFarcasterProfileInsertionPoint() {
+  const explicitTabBar = document.querySelector('div.flex.h-14.flex-row.items-center.justify-around');
+  if (explicitTabBar) {
+    return { target: explicitTabBar, position: "beforebegin" };
+  }
+  const classBasedTabBar = document.querySelector(
+    'div[class*="h-14"][class*="flex-row"][class*="items-center"][class*="justify-around"]'
+  );
+  if (classBasedTabBar) {
+    return { target: classBasedTabBar, position: "beforebegin" };
+  }
+
+  const tabList = document.querySelector('[role="tablist"]');
+  if (tabList) {
+    return { target: tabList, position: "beforebegin" };
+  }
+
+  const candidateSelectors = [
+    'nav[role="navigation"]',
+    '[data-testid="tab-list"]',
+    'div[class*="tabs"]',
+    'div[class*="Tabs"]',
+    'nav',
+    'div[role="tablist"]'
+  ];
+  const keywords = ["casts", "posts", "replies", "likes", "mentions", "media", "collects", "gallery", "highlights"];
+  for (const selector of candidateSelectors) {
+    const elements = document.querySelectorAll(selector);
+    for (const element of elements) {
+      const text = element.textContent?.toLowerCase() || "";
+      if (text && keywords.some(keyword => text.includes(keyword))) {
+        return { target: element, position: "beforebegin" };
+      }
+    }
+  }
+
+  const main = document.querySelector("main");
+  if (main) {
+    const sections = main.querySelectorAll("section");
+    if (sections.length > 0) {
+      return { target: sections[0], position: "beforebegin" };
+    }
+    if (main.firstElementChild) {
+      return { target: main.firstElementChild, position: "beforebegin" };
+    }
+  }
+
+  return null;
+}
+
 function removeProfileInfoContainer() {
   if (profileInfoContainerElement && profileInfoContainerElement.parentElement) {
     profileInfoContainerElement.remove();
   }
   profileInfoContainerElement = null;
   profileInfoUsername = null;
+  profileInfoPlatform = null;
+  profileInfoKey = null;
 }
 
 async function maybeRenderXProfileInfo() {
@@ -915,25 +1081,25 @@ async function maybeRenderXProfileInfo() {
   }
 
   const normalizedUsername = username.toLowerCase();
+  const targetKey = `x:${normalizedUsername}`;
   const insertionPoint = findXProfileInsertionPoint();
   if (!insertionPoint) {
     return;
   }
 
   if (
-    profileInfoUsername &&
-    profileInfoUsername.toLowerCase() === normalizedUsername &&
+    profileInfoKey === targetKey &&
     profileInfoContainerElement &&
     profileInfoContainerElement.isConnected
   ) {
     return;
   }
 
-  if (profileInfoLoadingUsername === normalizedUsername) {
+  if (profileInfoLoadingKey === targetKey) {
     return;
   }
 
-  profileInfoLoadingUsername = normalizedUsername;
+  profileInfoLoadingKey = targetKey;
   try {
     const userData = await fetchEthosUserData(username);
     if (!userData) {
@@ -952,15 +1118,86 @@ async function maybeRenderXProfileInfo() {
     }
     const { target: latestTarget, position: latestPosition } = latestInsertionPoint;
 
-    const newContainer = buildProfileInfoContainer(userData);
+    const newContainer = buildProfileInfoContainer(userData, "x");
     removeProfileInfoContainer();
     latestTarget.insertAdjacentElement(latestPosition, newContainer);
     profileInfoContainerElement = newContainer;
     profileInfoUsername = username;
+    profileInfoPlatform = "x";
+    profileInfoKey = `${profileInfoPlatform}:${normalizedUsername}`;
   } catch (error) {
     // Swallow errors silently to avoid console noise
   } finally {
-    profileInfoLoadingUsername = null;
+    profileInfoLoadingKey = null;
+  }
+}
+
+async function maybeRenderFarcasterProfileInfo() {
+  if (getPlatform() !== "farcaster") {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  if (!isOnFarcasterProfilePage()) {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  const username = extractUsernameFromURL();
+  if (!username) {
+    removeProfileInfoContainer();
+    return;
+  }
+
+  const normalizedUsername = username.toLowerCase();
+  const targetKey = `farcaster:${normalizedUsername}`;
+  const insertionPoint = findFarcasterProfileInsertionPoint();
+  if (!insertionPoint) {
+    return;
+  }
+
+  if (
+    profileInfoKey === targetKey &&
+    profileInfoContainerElement &&
+    profileInfoContainerElement.isConnected
+  ) {
+    return;
+  }
+
+  if (profileInfoLoadingKey === targetKey) {
+    return;
+  }
+
+  profileInfoLoadingKey = targetKey;
+  try {
+    const userData = await fetchEthosUserData(username);
+    if (!userData) {
+      removeProfileInfoContainer();
+      return;
+    }
+
+    const latestUsername = extractUsernameFromURL();
+    if (!latestUsername || latestUsername.toLowerCase() !== normalizedUsername || !isOnFarcasterProfilePage()) {
+      return;
+    }
+
+    const latestInsertionPoint = findFarcasterProfileInsertionPoint();
+    if (!latestInsertionPoint) {
+      return;
+    }
+    const { target: latestTarget, position: latestPosition } = latestInsertionPoint;
+
+    const newContainer = buildProfileInfoContainer(userData, "farcaster");
+    removeProfileInfoContainer();
+    latestTarget.insertAdjacentElement(latestPosition, newContainer);
+    profileInfoContainerElement = newContainer;
+    profileInfoUsername = username;
+    profileInfoPlatform = "farcaster";
+    profileInfoKey = `${profileInfoPlatform}:${normalizedUsername}`;
+  } catch (error) {
+    // Silently ignore errors
+  } finally {
+    profileInfoLoadingKey = null;
   }
 }
 
@@ -1155,6 +1392,8 @@ function scanForUserNames(root) {
 
   if (platform === 'x') {
     maybeRenderXProfileInfo();
+  } else if (platform === 'farcaster') {
+    maybeRenderFarcasterProfileInfo();
   }
 
   // For Farcaster, we handle links differently
