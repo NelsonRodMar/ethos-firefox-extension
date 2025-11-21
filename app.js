@@ -320,7 +320,7 @@ function formatReviewStats(userData) {
   if (!total) {
     return { primary: "--", secondary: "(0)" };
   }
-  const percentage = Math.round((positive / total) * 100);
+  const percentage = Math.round(((positive + neutral)/ total) * 100);
   return { primary: `${percentage}%`, secondary: `(${total})` };
 }
 
@@ -938,7 +938,12 @@ function isOnXProfilePage() {
   if (pathSegments.length === 1) {
     return true;
   }
-  const allowedSecondSegments = new Set(["with_replies", "media", "likes", "verified_followers", "followers", "following", "lists", "communities"]);
+  // Exclude followers-related pages
+  const excludedSecondSegments = ["verified_followers", "followers_you_follow", "followers", "following"];
+  if (excludedSecondSegments.includes(pathSegments[1].toLowerCase())) {
+    return false;
+  }
+  const allowedSecondSegments = new Set(["with_replies", "media", "likes", "lists", "communities"]);
   return allowedSecondSegments.has(pathSegments[1].toLowerCase());
 }
 
@@ -958,6 +963,11 @@ function isOnFarcasterProfilePage() {
   if (pathSegments.length === 1) {
     return true;
   }
+  // Exclude followers-related pages
+  const excludedSecondSegments = ["followers", "followers-you-know", "following"];
+  if (excludedSecondSegments.includes(pathSegments[1].toLowerCase())) {
+    return false;
+  }
   const allowedSecondSegments = new Set([
     "casts",
     "posts",
@@ -965,8 +975,6 @@ function isOnFarcasterProfilePage() {
     "likes",
     "media",
     "collects",
-    "followers",
-    "following",
     "collections",
     "highlights",
     "mentions"
@@ -976,6 +984,64 @@ function isOnFarcasterProfilePage() {
 
 function findXProfileInsertionPoint() {
   const primaryColumn = document.querySelector('div[data-testid="primaryColumn"]');
+  if (primaryColumn) {
+    // First, try to find the main profile div (the one with avatar and user info)
+    // This div has classes like "r-3pj75a r-ttdzmv r-1ifxtd0" and contains UserAvatar
+    const userAvatar = primaryColumn.querySelector('[data-testid^="UserAvatar-Container-"]');
+    if (userAvatar) {
+      // Walk up to find the profile container div
+      let container = userAvatar;
+      while (container && container !== primaryColumn) {
+        const classList = container.classList ? Array.from(container.classList) : [];
+        // Look for the div with r-3pj75a and r-ttdzmv classes (the main profile container)
+        const hasR3pj75a = classList.some(cls => cls === 'r-3pj75a');
+        const hasRttdzmv = classList.some(cls => cls === 'r-ttdzmv');
+        
+        if (hasR3pj75a && hasRttdzmv && container.tagName === 'DIV') {
+          if (primaryColumn.contains(container)) {
+            return { target: container, position: "afterend" };
+          }
+        }
+        
+        // Also check if this container has UserAvatar and UserName as direct/close children
+        if (container.tagName === 'DIV' && container.contains(userAvatar)) {
+          const userName = container.querySelector('[data-testid="UserName"]');
+          if (userName && primaryColumn.contains(container)) {
+            // Check if this is the outermost profile container (not nested inside another similar div)
+            const parent = container.parentElement;
+            if (!parent || parent === primaryColumn || 
+                !(parent.classList && Array.from(parent.classList).some(cls => cls === 'r-3pj75a'))) {
+              return { target: container, position: "afterend" };
+            }
+          }
+        }
+        
+        container = container.parentElement;
+      }
+    }
+    
+    // Fallback: Look for Communities section if it exists
+    const communitiesLink = primaryColumn.querySelector('a[href^="/i/communities/"]');
+    if (communitiesLink) {
+      // Find the div container that wraps the Communities link
+      let container = communitiesLink.parentElement;
+      
+      // Walk up to find the div with r-3pj75a class
+      while (container && container !== primaryColumn) {
+        const classList = container.classList ? Array.from(container.classList) : [];
+        const hasR3pj75a = classList.some(cls => cls === 'r-3pj75a');
+        
+        if (hasR3pj75a && container.tagName === 'DIV') {
+          if (primaryColumn.contains(container)) {
+            return { target: container, position: "beforebegin" };
+          }
+        }
+        
+        container = container.parentElement;
+      }
+    }
+  }
+  
   if (primaryColumn) {
     const tabList = primaryColumn.querySelector('[role="tablist"]');
     if (tabList && tabList.parentElement) {
