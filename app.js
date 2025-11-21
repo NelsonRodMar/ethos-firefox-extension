@@ -1297,6 +1297,15 @@ async function insertBox(container) {
   }
 
   const platform = getPlatform();
+  if (platform === 'farcaster') {
+    const stickyAncestor = container.closest('.sticky');
+    if (stickyAncestor) {
+      const existingBoxes = container.querySelectorAll(`.${BOX_CLASS}`);
+      existingBoxes.forEach((boxElement) => boxElement.remove());
+      containerToUsernameMap.delete(container);
+      return;
+    }
+  }
   const profileUsername = extractUsernameFromURL();
   
   // For Farcaster profile pages, find the flex-1 div and insert after it
